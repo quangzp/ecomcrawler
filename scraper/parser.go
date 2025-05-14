@@ -4,8 +4,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	log "github.com/sirupsen/logrus"
 )
 
 func cleanString(s string) string {
@@ -23,7 +21,7 @@ func extractPrice(priceStr string) string {
 	re := regexp.MustCompile(`[\d\.,]+`)
 	match := re.FindString(priceStr)
 	if match == "" {
-		log.WithField("original_price", priceStr).Warn("Could not extract numerical value from price string")
+		// log.WithField("original_price", priceStr).Warn("Could not extract numerical value from price string")
 		return priceStr
 	}
 
@@ -32,12 +30,12 @@ func extractPrice(priceStr string) string {
 
 	_, err := strconv.ParseFloat(cleanedMatch, 64)
 	if err != nil {
-		log.WithFields(log.Fields{
-			"original_price":  priceStr,
-			"extracted_match": match,
-			"cleaned_match":   cleanedMatch,
-			"error":           err,
-		}).Warn("Failed to parse cleaned price string to float, returning cleaned match.")
+		// log.WithFields(log.Fields{
+		// 	"original_price":  priceStr,
+		// 	"extracted_match": match,
+		// 	"cleaned_match":   cleanedMatch,
+		// 	"error":           err,
+		// }).Warn("Failed to parse cleaned price string to float, returning cleaned match.")
 		return match
 	}
 

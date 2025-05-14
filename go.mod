@@ -4,9 +4,9 @@ go 1.23.0
 
 toolchain go1.23.9
 
-require github.com/sirupsen/logrus v1.9.3 // Optional: for better logging
+require github.com/sirupsen/logrus v1.9.3
 
-require golang.org/x/sys v0.32.0 // indirect
+require golang.org/x/sys v0.32.0
 
 require (
 	github.com/PuerkitoBio/goquery v1.10.3

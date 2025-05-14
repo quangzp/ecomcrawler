@@ -19,9 +19,9 @@
       "max_retries": 3,
       "robots_txt_disabled": false,
       "headless": false, 
-      "chromedp_timeout_sec": 90, 
+      "chromedp_timeout_sec": 60, 
       "max_load_more_clicks":100,     
-      "wait_after_load_more_ms": 4000, 
+      "wait_after_load_more_ms": 5000, 
       "scroll_to_bottom": false         
     },
     {
@@ -43,9 +43,33 @@
       "max_retries": 3,
       "robots_txt_disabled": false,
       "headless": false, 
-      "chromedp_timeout_sec": 90, 
+      "chromedp_timeout_sec": 60, 
       "max_load_more_clicks": 100,     
-      "wait_after_load_more_ms": 4000, 
+      "wait_after_load_more_ms": 5000, 
+      "scroll_to_bottom": false         
+    },
+    {
+      "name": "MediaMart",
+      "base_url": "https://mediamart.vn/tivi",
+      "allowed_domains": ["mediamart.vn"],
+      "product_selector": "div.product-list div div.card",
+      "name_selector": "p.product-name",
+      "price_selector": "p.product-price",
+      "product_container_selector": "div.product-list", 
+      "load_more_button_selector": "a.seemoreproducts",
+      "next_page_selector": "",
+      "max_depth": 3, 
+      "delay_ms": 1500, 
+      "random_delay_ms": 500, 
+      "user_agent": "",
+      "async": true,
+      "parallelism": 2,
+      "max_retries": 3,
+      "robots_txt_disabled": false,
+      "headless": false, 
+      "chromedp_timeout_sec": 60, 
+      "max_load_more_clicks": 100,     
+      "wait_after_load_more_ms": 5000, 
       "scroll_to_bottom": false         
     }
   ]

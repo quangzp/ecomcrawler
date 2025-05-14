@@ -29,8 +29,9 @@ func CrawlSite(siteCfg SiteConfig, productChan chan<- Product, wg *sync.WaitGrou
 
 func crawlSiteWithChromedp(siteCfg SiteConfig, productChan chan<- Product, logger *log.Entry) {
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.Flag("headless", siteCfg.Headless),
+		chromedp.Flag("headless", true),
 		chromedp.Flag("disable-gpu", true),
+		// chromedp.WindowSize(600, 400),
 		chromedp.UserAgent(siteCfg.UserAgent),
 	)
 
@@ -51,12 +52,11 @@ func crawlSiteWithChromedp(siteCfg SiteConfig, productChan chan<- Product, logge
 	var mu sync.Mutex
 
 	initialActions := []chromedp.Action{
-		emulation.SetDeviceMetricsOverride(int64(320), int64(180), 1, false),
+		emulation.SetDeviceMetricsOverride(int64(1280), int64(800), 1, false),
 	}
 	initialActions = append(initialActions, chromedp.Navigate(siteCfg.BaseURL))
 	initialActions = append(initialActions, chromedp.WaitVisible(siteCfg.ProductContainerSelector, chromedp.ByQuery))
 
-	// Navigate to the initial page
 	logger.Infof("Navigating to %s", siteCfg.BaseURL)
 	if err := chromedp.Run(browserCtx,
 		initialActions...,
@@ -65,8 +65,6 @@ func crawlSiteWithChromedp(siteCfg SiteConfig, productChan chan<- Product, logge
 		return
 	}
 	logger.Info("Initial page loaded.")
-
-	logger.Infof("Emulating viewport: %dx%d", 320, 180)
 
 	for i := 0; i < siteCfg.MaxLoadMoreClicks || siteCfg.MaxLoadMoreClicks == 0; i++ {
 		var htmlContent string
@@ -85,7 +83,6 @@ func crawlSiteWithChromedp(siteCfg SiteConfig, productChan chan<- Product, logge
 			parseAndAddProductsFromHTML(htmlContent, siteCfg, &siteProducts, &mu, logger, siteCfg.BaseURL)
 		}
 
-		// Attempt to click "Load More" button
 		if siteCfg.LoadMoreButtonSelector == "" {
 			logger.Info("No 'Load More' button selector configured. Stopping.")
 			break
@@ -145,11 +142,10 @@ func crawlSiteWithChromedp(siteCfg SiteConfig, productChan chan<- Product, logge
 			break
 		}
 	}
-	mu.Lock()
 	for _, product := range siteProducts {
+		// logger.Info("Sent product: ", product.Name, " - ", product.SourceURL)
 		productChan <- product
 	}
-	mu.Unlock()
 
 	logger.WithField("products_found_chromedp", len(siteProducts)).Info("Finished crawl for site using Chromedp")
 }
@@ -178,9 +174,9 @@ func parseAndAddProductsFromHTML(htmlContent string, siteCfg SiteConfig, sitePro
 			nameLinkSelection.Closest("a").Each(func(_ int, a *goquery.Selection) {
 				productLink, _ = a.Attr("href")
 			})
-			if productLink == "" { // Fallback: find any link within the product item
+			if productLink == "" {
 				s.Find("a").Each(func(_ int, a *goquery.Selection) {
-					if tempLink, exists := a.Attr("href"); exists && productLink == "" { // take first one
+					if tempLink, exists := a.Attr("href"); exists && productLink == "" {
 						productLink = tempLink
 					}
 				})
@@ -188,7 +184,7 @@ func parseAndAddProductsFromHTML(htmlContent string, siteCfg SiteConfig, sitePro
 		}
 
 		if productLink != "" && !strings.HasPrefix(productLink, "http") {
-			base, errBase := url.Parse(pageURL) // Use the page URL it was found on
+			base, errBase := url.Parse(pageURL)
 			rel, errRel := url.Parse(productLink)
 			if errBase == nil && errRel == nil && base != nil && rel != nil {
 				productLink = base.ResolveReference(rel).String()

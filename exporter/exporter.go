@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"ecomcrawler/scraper" // Adjust module path
+	"ecomcrawler/scraper"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -25,18 +25,15 @@ func ExportToJSON(products []scraper.Product, outputDir string, siteName string)
 		return fmt.Errorf("failed to create output directory %s: %w", outputDir, err)
 	}
 
-	// Generate filename with timestamp
 	timestamp := time.Now().Format("2006-01-02_15-04-05")
 	fileName := fmt.Sprintf("%s_%s_products.json", siteName, timestamp)
 	filePath := filepath.Join(outputDir, fileName)
 
-	// Marshal data to JSON with indentation for readability
 	jsonData, err := json.MarshalIndent(products, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal products to JSON for site %s: %w", siteName, err)
 	}
 
-	// Write JSON data to file
 	if err := os.WriteFile(filePath, jsonData, 0644); err != nil {
 		return fmt.Errorf("failed to write JSON to file %s for site %s: %w", filePath, siteName, err)
 	}
