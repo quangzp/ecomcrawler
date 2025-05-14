@@ -1,177 +1,229 @@
 package scraper
 
 import (
+	"context"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/gocolly/colly/v2"
-	"github.com/gocolly/colly/v2/queue"
+	"github.com/PuerkitoBio/goquery"
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/dom"
+	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/chromedp"
 	log "github.com/sirupsen/logrus"
 )
 
-// CrawlSite performs the web scraping for a single configured site.
-// It sends found products to the productChan and signals completion via wg.
 func CrawlSite(siteCfg SiteConfig, productChan chan<- Product, wg *sync.WaitGroup) {
-	defer wg.Done() // Signal that this goroutine is done when the function returns
+	defer wg.Done()
 
 	logger := log.WithFields(log.Fields{
 		"site": siteCfg.Name,
 		"url":  siteCfg.BaseURL,
 	})
+
 	logger.Info("Starting crawl")
+	crawlSiteWithChromedp(siteCfg, productChan, logger)
+}
 
-	// Instantiate default collector
-	c := colly.NewCollector(
-		// colly.UserAgent(siteCfg.UserAgent), // Set globally or per request
-		colly.AllowedDomains(siteCfg.AllowedDomains...),
-		colly.MaxDepth(siteCfg.MaxDepth), // MaxDepth defines the limit of recursion for links
-		colly.Async(siteCfg.Async),       // Enable asynchronous requests for better performance
+func crawlSiteWithChromedp(siteCfg SiteConfig, productChan chan<- Product, logger *log.Entry) {
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.Flag("headless", siteCfg.Headless),
+		chromedp.Flag("disable-gpu", true),
+		chromedp.UserAgent(siteCfg.UserAgent),
 	)
 
-	// Configure retries
-	// if siteCfg.MaxRetries > 0 {
-	// 	c.MaxRetries = siteCfg.MaxRetries
-	// }
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancelAlloc()
 
-	// Configure rate limiting and parallelism
-	limitRule := &colly.LimitRule{
-		DomainGlob:  "*", // Apply to all domains specified in AllowedDomains
-		Parallelism: siteCfg.Parallelism,
-		Delay:       siteCfg.Delay,
-		RandomDelay: siteCfg.RandomDelay,
+	timeout := time.Duration(siteCfg.ChromedpTimeoutSec) * time.Second
+	if siteCfg.ChromedpTimeoutSec == 0 {
+		timeout = 60 * time.Second
 	}
-	if err := c.Limit(limitRule); err != nil {
-		logger.WithError(err).Error("Failed to set limit rule")
-		return
-	}
+	taskCtx, cancelTask := context.WithTimeout(allocCtx, timeout)
+	defer cancelTask()
 
-	// Disable robots.txt if configured
-	if siteCfg.RobotsTxtDisabled {
-		c.IgnoreRobotsTxt = true
-	}
+	browserCtx, cancelBrowser := chromedp.NewContext(taskCtx, chromedp.WithLogf(logger.Printf))
+	defer cancelBrowser()
 
-	// Create a request queue with a specific thread count (if not using Async directly)
-	// If using c.Async = true, Colly manages its own concurrency.
-	// The queue is more for managing the URLs to visit if you have many starting points or want finer control.
-	// For this setup, with a single BaseURL and pagination, Async + Parallelism in LimitRule is often sufficient.
-	// However, if you had many initial URLs for a single site config, a queue could be useful.
-	q, _ := queue.New(
-		siteCfg.Parallelism,                         // Number of consumer threads
-		&queue.InMemoryQueueStorage{MaxSize: 10000}, // Max URLs in queue
-	)
-
-	// Slice to hold products for this specific site crawl
 	var siteProducts []Product
-
-	// Mutex for safely appending to siteProducts if multiple OnHTML callbacks run concurrently for the same collector
-	// (though with Colly's default handling for a single collector instance, direct concurrent writes to siteProducts
-	// from OnHTML for the *same* collector are less of a concern than if you were manually managing goroutines per element).
-	// However, if Async is true, callbacks can execute concurrently.
 	var mu sync.Mutex
 
-	// OnHTML callback for finding product items
-	c.OnHTML(siteCfg.ProductSelector, func(e *colly.HTMLElement) {
-		// Set User-Agent per request if needed, or rely on global
-		e.Request.Headers.Set("User-Agent", siteCfg.UserAgent)
-
-		productName := cleanString(e.ChildText(siteCfg.NameSelector))
-		productPrice := extractPrice(e.ChildText(siteCfg.PriceSelector)) // Use the parser utility
-		productCategory := ""
-		if siteCfg.CategorySelector != "" {
-			productCategory = extractCategory(e.ChildText(siteCfg.CategorySelector))
-		}
-		productURL := e.Request.AbsoluteURL(e.ChildAttr("a", "href")) // Assuming name is in an <a> tag for its URL
-		if productName == "" && productPrice == "" {                  // Skip if essential data is missing
-			logger.WithField("element_html", e.Text).Debug("Skipping element, missing name and price.")
-			return
-		}
-
-		mu.Lock()
-		product := Product{
-			Name:      productName,
-			Price:     productPrice,
-			Category:  productCategory,
-			SourceURL: productURL, // Or e.Request.URL.String() for the page URL it was found on
-			ScrapedAt: time.Now().UTC(),
-		}
-		siteProducts = append(siteProducts, product)
-		mu.Unlock()
-
-		logger.WithFields(log.Fields{"name": productName, "price": productPrice}).Debug("Found product")
-	})
-
-	// OnHTML callback for finding the "next page" link for pagination
-	if siteCfg.NextPageSelector != "" {
-		c.OnHTML(siteCfg.NextPageSelector, func(e *colly.HTMLElement) {
-			nextPageLink := e.Request.AbsoluteURL(e.Attr("href"))
-			if nextPageLink != "" {
-				logger.WithField("next_page_url", nextPageLink).Info("Found next page")
-				// To prevent re-visiting and to respect MaxDepth, Colly handles this if MaxDepth > 0.
-				// If MaxDepth is 1, it only crawls the initial page. If > 1, it follows links.
-				// We simply visit the link. Colly's MaxDepth will stop it.
-				time.Sleep(siteCfg.Delay / 2) // Optional small delay before queuing next page
-				err := q.AddURL(nextPageLink) // Add to queue if using queue explicitly
-				if err != nil {
-					logger.WithError(err).Warn("Failed to add next page to queue")
-				}
-				// Or directly: e.Request.Visit(nextPageLink) if not using explicit queue for pagination
-			}
-		})
+	initialActions := []chromedp.Action{
+		emulation.SetDeviceMetricsOverride(int64(320), int64(180), 1, false),
 	}
+	initialActions = append(initialActions, chromedp.Navigate(siteCfg.BaseURL))
+	initialActions = append(initialActions, chromedp.WaitVisible(siteCfg.ProductContainerSelector, chromedp.ByQuery))
 
-	// OnRequest callback to set headers or log
-	c.OnRequest(func(r *colly.Request) {
-		r.Headers.Set("User-Agent", siteCfg.UserAgent) // Ensure User-Agent is set
-		logger.WithField("url", r.URL.String()).Info("Visiting page")
-	})
-
-	// OnError callback to handle errors during requests
-	c.OnError(func(r *colly.Response, err error) {
-		logger.WithFields(log.Fields{
-			"url":         r.Request.URL.String(),
-			"status_code": r.StatusCode,
-			"error":       err,
-		}).Error("Request failed")
-		// Implement retry logic here if not using Colly's built-in retries, or for specific error types
-	})
-
-	// OnScraped callback, after OnHTML has finished
-	c.OnScraped(func(r *colly.Response) {
-		logger.WithField("url", r.Request.URL.String()).Info("Finished scraping page")
-	})
-
-	// Start scraping by adding the base URL to the queue
-	err := q.AddURL(siteCfg.BaseURL)
-	if err != nil {
-		logger.WithError(err).Errorf("Failed to add base URL to queue: %s", siteCfg.BaseURL)
+	// Navigate to the initial page
+	logger.Infof("Navigating to %s", siteCfg.BaseURL)
+	if err := chromedp.Run(browserCtx,
+		initialActions...,
+	); err != nil {
+		logger.WithError(err).Error("Failed to navigate to base URL or find initial product container")
 		return
 	}
+	logger.Info("Initial page loaded.")
 
-	// Start consumer threads and wait for them to finish (if using explicit queue)
-	// If only using c.Visit and c.Async, c.Wait() is the primary mechanism.
-	q.Run(c) // This will block until the queue is empty and workers are done.
-	c.Wait() // Wait for all asynchronous operations of the collector to complete.
+	logger.Infof("Emulating viewport: %dx%d", 320, 180)
 
-	// Send all collected products for this site to the main channel
-	mu.Lock() // Ensure thread-safe access to siteProducts, though by this point, callbacks should be done.
+	for i := 0; i < siteCfg.MaxLoadMoreClicks || siteCfg.MaxLoadMoreClicks == 0; i++ {
+		var htmlContent string
+		err := chromedp.Run(browserCtx,
+			chromedp.OuterHTML(siteCfg.ProductContainerSelector, &htmlContent, chromedp.ByQuery),
+		)
+		if err != nil {
+			logger.WithError(err).Warn("Failed to get HTML content from product container")
+		} else {
+
+			//doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
+			// content := []byte(htmlContent)
+			// outp := "output" + strconv.Itoa(i) + ".html"
+			// os.WriteFile(outp, content, 0644)
+
+			parseAndAddProductsFromHTML(htmlContent, siteCfg, &siteProducts, &mu, logger, siteCfg.BaseURL)
+		}
+
+		// Attempt to click "Load More" button
+		if siteCfg.LoadMoreButtonSelector == "" {
+			logger.Info("No 'Load More' button selector configured. Stopping.")
+			break
+		}
+
+		var buttonNodes []*cdp.Node
+		err = chromedp.Run(browserCtx,
+			chromedp.Nodes(siteCfg.LoadMoreButtonSelector, &buttonNodes, chromedp.ByQuery),
+		)
+		if err != nil || len(buttonNodes) == 0 {
+			logger.Info("Load More button not found or error acquiring it. Assuming no more products.")
+			break
+		}
+
+		time.Sleep(siteCfg.Delay)
+		if siteCfg.ScrollToBottom {
+			logger.Debug("Scrolling to bottom")
+			if err := chromedp.Run(browserCtx, dom.ScrollIntoViewIfNeeded()); err != nil {
+				logger.WithError(err).Warn("Failed to scroll to bottom")
+			}
+		} else {
+			logger.Debugf("Scrolling button '%s' into view", siteCfg.LoadMoreButtonSelector)
+			if err := chromedp.Run(browserCtx, chromedp.ScrollIntoView(siteCfg.LoadMoreButtonSelector, chromedp.ByQuery)); err != nil {
+				logger.WithError(err).Warn("Failed to scroll 'Load More' button into view")
+			}
+		}
+
+		time.Sleep(1000 * time.Millisecond)
+
+		logger.Infof("Attempting to click 'Load More' button (attempt %d/%d)", i+1, siteCfg.MaxLoadMoreClicks)
+		err = chromedp.Run(browserCtx,
+			chromedp.Click(siteCfg.LoadMoreButtonSelector, chromedp.ByQuery, chromedp.NodeVisible),
+		)
+		if err != nil {
+			logger.WithError(err).Warn("Failed to click 'Load More' button. Assuming no more products or button is gone.")
+			break
+		}
+
+		waitDuration := time.Duration(siteCfg.WaitAfterLoadMoreMs) * time.Millisecond
+		if siteCfg.WaitAfterLoadMoreMs == 0 {
+			waitDuration = 3 * time.Second
+		}
+		logger.Infof("Clicked 'Load More'. Waiting for %v for new content...", waitDuration)
+
+		chromedp.Sleep(waitDuration)
+
+		if siteCfg.MaxLoadMoreClicks > 0 && i+1 == siteCfg.MaxLoadMoreClicks {
+			logger.Info("Reached max 'Load More' clicks.")
+			var finalHTMLContent string
+			finalErr := chromedp.Run(browserCtx,
+				chromedp.OuterHTML(siteCfg.ProductContainerSelector, &finalHTMLContent, chromedp.ByQuery),
+			)
+			if finalErr == nil {
+				//doc, parseErr := goquery.NewDocumentFromReader(strings.NewReader(finalHTMLContent))
+				parseAndAddProductsFromHTML(finalHTMLContent, siteCfg, &siteProducts, &mu, logger, siteCfg.BaseURL)
+			}
+			break
+		}
+	}
+	mu.Lock()
 	for _, product := range siteProducts {
 		productChan <- product
 	}
 	mu.Unlock()
 
-	logger.WithField("products_found", len(siteProducts)).Info("Finished crawl for site")
+	logger.WithField("products_found_chromedp", len(siteProducts)).Info("Finished crawl for site using Chromedp")
 }
 
-// Helper to make relative URLs absolute
-func absoluteURL(baseURL, relativePath string) string {
-	base, err := url.Parse(baseURL)
+func parseAndAddProductsFromHTML(htmlContent string, siteCfg SiteConfig, siteProducts *[]Product, mu *sync.Mutex, logger *log.Entry, pageURL string) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
 	if err != nil {
-		return relativePath // Should not happen with valid BaseURL
+		logger.WithError(err).Warn("Failed to parse HTML content with goquery during product extraction")
+		return
 	}
-	rel, err := url.Parse(relativePath)
-	if err != nil {
-		return relativePath // Malformed relative path
+
+	foundProductsInThisParse := 0
+	doc.Find(siteCfg.ProductSelector).Each(func(idx int, s *goquery.Selection) {
+		productName := cleanString(s.Find(siteCfg.NameSelector).First().Text())
+		productPrice := extractPrice(s.Find(siteCfg.PriceSelector).First().Text())
+		productCategory := ""
+		if siteCfg.CategorySelector != "" {
+			productCategory = extractCategory(s.Find(siteCfg.CategorySelector).First().Text())
+		}
+
+		var productLink string
+		nameLinkSelection := s.Find(siteCfg.NameSelector).First()
+		if nameLinkSelection.Is("a") {
+			productLink, _ = nameLinkSelection.Attr("href")
+		} else {
+			nameLinkSelection.Closest("a").Each(func(_ int, a *goquery.Selection) {
+				productLink, _ = a.Attr("href")
+			})
+			if productLink == "" { // Fallback: find any link within the product item
+				s.Find("a").Each(func(_ int, a *goquery.Selection) {
+					if tempLink, exists := a.Attr("href"); exists && productLink == "" { // take first one
+						productLink = tempLink
+					}
+				})
+			}
+		}
+
+		if productLink != "" && !strings.HasPrefix(productLink, "http") {
+			base, errBase := url.Parse(pageURL) // Use the page URL it was found on
+			rel, errRel := url.Parse(productLink)
+			if errBase == nil && errRel == nil && base != nil && rel != nil {
+				productLink = base.ResolveReference(rel).String()
+			} else {
+				logger.Warnf("Could not resolve relative product URL: %s (base: %s)", productLink, pageURL)
+			}
+		}
+		if productLink == "" {
+			productLink = pageURL // Fallback to the page URL if no specific product link found
+		}
+
+		if productName != "" || productPrice != "" {
+			mu.Lock()
+			isDuplicate := false
+			for _, p := range *siteProducts {
+				if p.Name == productName && p.Price == productPrice && p.SourceURL == productLink {
+					isDuplicate = true
+					break
+				}
+			}
+			if !isDuplicate {
+				newProduct := Product{
+					Name:      productName,
+					Price:     productPrice,
+					Category:  productCategory,
+					SourceURL: productLink,
+					ScrapedAt: time.Now().UTC(),
+				}
+				*siteProducts = append(*siteProducts, newProduct)
+				foundProductsInThisParse++
+			}
+			mu.Unlock()
+		}
+	})
+	if foundProductsInThisParse > 0 {
+		logger.Infof("Parsed and added %d new unique products from current HTML state.", foundProductsInThisParse)
 	}
-	return base.ResolveReference(rel).String()
 }

@@ -2,32 +2,39 @@ package scraper
 
 import "time"
 
-// Product holds the scraped product data.
 type Product struct {
 	Name      string    `json:"name"`
-	Price     string    `json:"price"` // Using string for price to handle various currency formats initially
+	Price     string    `json:"price"`
 	Category  string    `json:"category,omitempty"`
 	SourceURL string    `json:"source_url"`
 	ScrapedAt time.Time `json:"scraped_at"`
 }
 
-// SiteConfig defines the configuration for a single e-commerce site to be scraped.
 type SiteConfig struct {
-	Name             string        `json:"name"`                         // Informative name for the site
-	BaseURL          string        `json:"base_url"`                     // Starting URL for crawling
-	ProductSelector  string        `json:"product_selector"`             // CSS selector for individual product items/blocks
-	NameSelector     string        `json:"name_selector"`                // CSS selector for product name (relative to ProductSelector)
-	PriceSelector    string        `json:"price_selector"`               // CSS selector for product price (relative to ProductSelector)
-	CategorySelector string        `json:"category_selector,omitempty"`  // CSS selector for product category (relative to ProductSelector, optional)
-	NextPageSelector string        `json:"next_page_selector,omitempty"` // CSS selector for the "next page" link
-	MaxDepth         int           `json:"max_depth,omitempty"`          // Max pagination depth (0 for unlimited or if no pagination)
-	AllowedDomains   []string      `json:"allowed_domains"`              // Domains the crawler is allowed to visit
-	Delay            time.Duration `json:"delay_ms,omitempty"`           // Delay between requests to this domain in milliseconds
-	RandomDelay      time.Duration `json:"random_delay_ms,omitempty"`    // Additional random delay
-	UserAgent        string        `json:"user_agent,omitempty"`         // Custom User-Agent
-	MaxRetries       int           `json:"max_retries,omitempty"`        // Max retries on failed requests
-	// Concurrency related settings for Colly
-	Async             bool `json:"async,omitempty"`               // Enable asynchronous requests
-	Parallelism       int  `json:"parallelism,omitempty"`         // Number of parallel threads per domain
-	RobotsTxtDisabled bool `json:"robots_txt_disabled,omitempty"` // Set to true to disable robots.txt
+	Name                     string        `json:"name"`
+	BaseURL                  string        `json:"base_url"`
+	ProductSelector          string        `json:"product_selector"`
+	NameSelector             string        `json:"name_selector"`
+	PriceSelector            string        `json:"price_selector"`
+	CategorySelector         string        `json:"category_selector,omitempty"`
+	NextPageSelector         string        `json:"next_page_selector,omitempty"`
+	MaxDepth                 int           `json:"max_depth,omitempty"`
+	AllowedDomains           []string      `json:"allowed_domains"`
+	Delay                    time.Duration `json:"delay_ms,omitempty"`
+	RandomDelay              time.Duration `json:"random_delay_ms,omitempty"`
+	UserAgent                string        `json:"user_agent,omitempty"`
+	MaxRetries               int           `json:"max_retries,omitempty"`
+	Async                    bool          `json:"async,omitempty"`
+	Parallelism              int           `json:"parallelism,omitempty"`
+	RobotsTxtDisabled        bool          `json:"robots_txt_disabled,omitempty"`
+	LoadMoreButtonSelector   string        `json:"load_more_button_selector,omitempty"`
+	MaxLoadMoreClicks        int           `json:"max_load_more_clicks,omitempty"`
+	ScrollToBottom           bool          `json:"scroll_to_bottom,omitempty"`
+	WaitAfterLoadMoreMs      int           `json:"wait_after_load_more_ms,omitempty"`
+	ProductContainerSelector string        `json:"product_container_selector,omitempty"`
+	Headless                 bool          `json:"headless,omitempty"`
+	ChromedpTimeoutSec       int           `json:"chromedp_timeout_sec,omitempty"`
+	PollForProductIncrease   bool          `json:"poll_for_product_increase,omitempty"`
+	PollTimeoutMs            int           `json:"poll_timeout_ms,omitempty"`
+	PollIntervalMs           int           `json:"poll_interval_ms,omitempty"`
 }

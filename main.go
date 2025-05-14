@@ -27,7 +27,7 @@ func init() {
 
 func main() {
 	// Define command-line flags
-	configFile := flag.String("config", "configs/sites.example.json", "Path to the JSON config file for sites.")
+	configFile := flag.String("config", "./site_configs.json", "Path to the JSON config file for sites.")
 	outputDir := flag.String("output", "output_data", "Directory to save scraped data.")
 	logLevel := flag.String("loglevel", "info", "Log level (debug, info, warn, error, fatal, panic).")
 	flag.Parse()
@@ -78,21 +78,9 @@ func main() {
 		for product := range productChan {
 			for _, sc := range siteConfigs {
 				for _, domain := range sc.AllowedDomains {
-					if strings.Contains(product.SourceURL, domain) || strings.Contains(product.ScrapedAt.String(), sc.Name) {
+					if strings.Contains(product.SourceURL, domain) {
 						mapMutex.Lock()
-						// Attempt to find site name by URL (less reliable)
-						foundSiteName := "unknown_site"
-						for _, sc := range siteConfigs {
-							for _, domain := range sc.AllowedDomains {
-								if strings.Contains(strings.ToLower(product.SourceURL), strings.ToLower(domain)) {
-									foundSiteName = sc.Name
-									break
-								}
-							}
-							if foundSiteName != "unknown_site" {
-								break
-							}
-						}
+						foundSiteName := sc.Name
 						allProductsBySite[foundSiteName] = append(allProductsBySite[foundSiteName], product)
 						mapMutex.Unlock()
 					}

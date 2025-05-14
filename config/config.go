@@ -24,7 +24,7 @@ func LoadSiteConfigs(filePath string) ([]scraper.SiteConfig, error) {
 	// Apply default values or perform validation if necessary
 	for i := range configs {
 		if configs[i].UserAgent == "" {
-			configs[i].UserAgent = "EcomCrawler/1.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" // Default User-Agent
+			configs[i].UserAgent = "EcomCrawler/1.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" //
 		}
 		if configs[i].Delay == 0 {
 			configs[i].Delay = 1000 * time.Millisecond // Default 1 second delay
